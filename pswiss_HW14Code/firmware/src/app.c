@@ -1,49 +1,3 @@
-/*******************************************************************************
-  MPLAB Harmony Application Source File
-  
-  Company:
-    Microchip Technology Inc.
-  
-  File Name:
-    app.c
-
-  Summary:
-    This file contains the source code for the MPLAB Harmony application.
-
-  Description:
-    This file contains the source code for the MPLAB Harmony application.  It 
-    implements the logic of the application's state machine and it may call 
-    API routines of other MPLAB Harmony modules in the system, such as drivers,
-    system services, and middleware.  However, it does not call any of the
-    system interfaces (such as the "Initialize" and "Tasks" functions) of any of
-    the modules in the system or make any assumptions about when those functions
-    are called.  That is the responsibility of the configuration-specific system
-    files.
- *******************************************************************************/
-
-// DOM-IGNORE-BEGIN
-/*******************************************************************************
-Copyright (c) 2013-2014 released Microchip Technology Inc.  All rights reserved.
-
-Microchip licenses to you the right to use, modify, copy and distribute
-Software only when embedded on a Microchip microcontroller or digital signal
-controller that is integrated into your product or third party product
-(pursuant to the sublicense terms in the accompanying license agreement).
-
-You should refer to the license agreement accompanying this Software for
-additional information regarding your rights and obligations.
-
-SOFTWARE AND DOCUMENTATION ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND,
-EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF
-MERCHANTABILITY, TITLE, NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE.
-IN NO EVENT SHALL MICROCHIP OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER
-CONTRACT, NEGLIGENCE, STRICT LIABILITY, CONTRIBUTION, BREACH OF WARRANTY, OR
-OTHER LEGAL EQUITABLE THEORY ANY DIRECT OR INDIRECT DAMAGES OR EXPENSES
-INCLUDING BUT NOT LIMITED TO ANY INCIDENTAL, SPECIAL, INDIRECT, PUNITIVE OR
-CONSEQUENTIAL DAMAGES, LOST PROFITS OR LOST DATA, COST OF PROCUREMENT OF
-SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
-(INCLUDING BUT NOT LIMITED TO ANY DEFENSE THEREOF), OR OTHER SIMILAR COSTS.
- *******************************************************************************/
 // DOM-IGNORE-END
 
 
@@ -67,6 +21,11 @@ uint8_t APP_MAKE_BUFFER_DMA_READY dataOut[APP_READ_BUFFER_SIZE];
 uint8_t APP_MAKE_BUFFER_DMA_READY readBuffer[APP_READ_BUFFER_SIZE];
 int len, i = 0;
 int startTime = 0;
+
+char rx[5000]; // the raw data
+int rxPos = 0; // how much data has been stored
+int gotRx = 0; // the flag
+int rxVal = 0; // a place to store the int that was received
 
 // *****************************************************************************
 /* Application Data
@@ -388,9 +347,11 @@ void APP_Tasks(void) {
                 break;
             }
 
+            
+
             /* If a read is complete, then schedule a read
              * else wait for the current read to complete */
-
+/**/
             appData.state = APP_STATE_WAIT_FOR_READ_COMPLETE;
             if (appData.isReadComplete == true) {
                 appData.isReadComplete = false;
@@ -404,6 +365,28 @@ void APP_Tasks(void) {
                     appData.state = APP_STATE_ERROR;
                     break;
                 }
+                
+
+                int ii = 0;
+                // loop thru the characters in the buffer
+                while (appData.readBuffer[ii] != 0) {
+                    // if you got a newline
+                    if (appData.readBuffer[ii] == '\n' || appData.readBuffer[ii] == '\r') {
+                        rx[rxPos] = 0; // end the array
+                        sscanf(rx, "%d", &rxVal); // get the int out of the array
+                        gotRx = 1; // set the flag
+                        break; // get out of the while loop
+                    } else if (appData.readBuffer[ii] == 0) {
+                        break; // there was no newline, get out of the while loop
+                    } else {
+                        // save the character into the array
+                        rx[rxPos] = appData.readBuffer[ii];
+                        rxPos++;
+                        ii++;
+                    }
+                }
+                
+                
             }
 
             break;
@@ -414,13 +397,17 @@ void APP_Tasks(void) {
             if (APP_StateReset()) {
                 break;
             }
+            
+            if (gotRx || _CP0_GET_COUNT() - startTime > (48000000 / 2 / 5)) {
+                appData.state = APP_STATE_SCHEDULE_WRITE;
+            }
 
             /* Check if a character was received or a switch was pressed.
              * The isReadComplete flag gets updated in the CDC event handler. */
-
+            /*
             if (appData.isReadComplete || _CP0_GET_COUNT() - startTime > (48000000 / 2 / 5)) {
                 appData.state = APP_STATE_SCHEDULE_WRITE;
-            }
+            }*/
 
             break;
 
@@ -436,6 +423,27 @@ void APP_Tasks(void) {
             appData.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             appData.isWriteComplete = false;
             appData.state = APP_STATE_WAIT_FOR_WRITE_COMPLETE;
+            
+            if (gotRx) {
+                len = sprintf(dataOut, "got: %d\r\n", rxVal);
+                i++;
+                USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
+                        &appData.writeTransferHandle,
+                        dataOut, len,
+                        USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
+                rxPos = 0;
+                rxVal = 0;
+                gotRx = 0;
+            } else {
+                len = sprintf(dataOut, "%d\r\n", i);
+                i++;
+                USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
+                        &appData.writeTransferHandle, dataOut, len,
+                        USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
+                startTime = _CP0_GET_COUNT();
+            }
+            
+            /*
 
             len = sprintf(dataOut, "%d\r\n", i);
             i++;
@@ -449,7 +457,7 @@ void APP_Tasks(void) {
                         &appData.writeTransferHandle, dataOut, len,
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
                 startTime = _CP0_GET_COUNT();
-            }
+            }*/
             break;
 
         case APP_STATE_WAIT_FOR_WRITE_COMPLETE:
